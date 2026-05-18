@@ -111,7 +111,7 @@ class BallDetection2D(BaseModel):
     image_xy: tuple[float, float]
     confidence: float = Field(ge=0.0, le=1.0)
     visibility: BallVisibility = "visible"
-    source: str = "wasb_sbdt"
+    source: str = "tracknetv4"
 
 
 class BallTrack2D(BaseModel):

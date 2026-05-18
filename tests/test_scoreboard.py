@@ -510,43 +510,37 @@ class TestStabilizeScores:
 
 
 class TestScoreboardOCR:
-    def test_paddleocr_predict_adapter(self, monkeypatch):
-        """PaddleOCR 3.x results should parse without loading real models."""
-        import src.scoreboard.ocr_engine as ocr_mod
+    def test_paddleocr_predict_parser(self):
+        """PaddleOCR 3.x results should parse correctly."""
+        from src.scoreboard.ocr_engine import _parse_predict_result
 
-        class FakePaddleOCR:
-            def __init__(self, **kwargs):
-                assert "show_log" not in kwargs
-                assert kwargs["device"] == "cpu"
-                assert kwargs["enable_mkldnn"] is False
-                assert kwargs["use_doc_orientation_classify"] is False
-                assert kwargs["use_doc_unwarping"] is False
-                assert kwargs["use_textline_orientation"] is False
+        result = [{"rec_texts": ["6 4", "30 15"], "rec_scores": [0.8, 1.0]}]
+        texts, confidences = _parse_predict_result(result)
+        assert texts == ["6 4", "30 15"]
+        assert confidences == [0.8, 1.0]
 
-            def predict(self, image):
-                assert len(image.shape) == 3
-                return [{"rec_texts": ["6 4", "30 15"], "rec_scores": [0.8, 1.0]}]
+    def test_paddleocr_legacy_parser(self):
+        """PaddleOCR 2.x results should parse correctly."""
+        from src.scoreboard.ocr_engine import _parse_legacy_result
 
-        monkeypatch.setattr(ocr_mod, "PADDLE_AVAILABLE", True)
-        monkeypatch.setattr(ocr_mod, "PaddleOCR", FakePaddleOCR)
-
-        ocr = ScoreboardOCR({"ocr_engine": "paddleocr"})
-        text, confidence = ocr._read_paddle(np.zeros((50, 200), dtype=np.uint8))
-
-        assert text == "6 4 30 15"
-        assert confidence == 0.9
+        result = [[[None, ("6-4", 0.9)], [None, ("30-15", 0.85)]]]
+        texts, confidences = _parse_legacy_result(result)
+        assert texts == ["6-4", "30-15"]
+        assert confidences == [0.9, 0.85]
 
     def test_graceful_degradation_no_engines(self, monkeypatch):
-        """OCR should handle missing engines gracefully."""
+        """OCR should handle subprocess init failure gracefully."""
         import src.scoreboard.ocr_engine as ocr_mod
 
-        monkeypatch.setattr(ocr_mod, "PADDLE_AVAILABLE", False)
+        def _fail_init(self):
+            self._engine = "none"
+
+        monkeypatch.setattr(ocr_mod.ScoreboardOCR, "_init_paddle_subprocess", _fail_init)
 
         ocr = ScoreboardOCR({"ocr_engine": "paddleocr"})
         assert ocr.engine_name == "none"
         assert not ocr.is_available
 
-        # Should return empty result, not crash
         crop = np.zeros((50, 200, 3), dtype=np.uint8)
         text, confidence = ocr.read_text(crop)
         assert text == ""
@@ -556,7 +550,10 @@ class TestScoreboardOCR:
         """OCR should handle empty crops gracefully."""
         import src.scoreboard.ocr_engine as ocr_mod
 
-        monkeypatch.setattr(ocr_mod, "PADDLE_AVAILABLE", False)
+        def _fail_init(self):
+            self._engine = "none"
+
+        monkeypatch.setattr(ocr_mod.ScoreboardOCR, "_init_paddle_subprocess", _fail_init)
 
         ocr = ScoreboardOCR({"ocr_engine": "paddleocr"})
         text, confidence = ocr.read_text(np.array([]))
@@ -567,7 +564,10 @@ class TestScoreboardOCR:
         """OCR should handle None crops gracefully."""
         import src.scoreboard.ocr_engine as ocr_mod
 
-        monkeypatch.setattr(ocr_mod, "PADDLE_AVAILABLE", False)
+        def _fail_init(self):
+            self._engine = "none"
+
+        monkeypatch.setattr(ocr_mod.ScoreboardOCR, "_init_paddle_subprocess", _fail_init)
 
         ocr = ScoreboardOCR({"ocr_engine": "paddleocr"})
         text, confidence = ocr.read_text(None)

@@ -16,6 +16,7 @@ dependencies = [
     "loguru",
     "pandas",
     "deeplsd @ git+https://github.com/cvg/DeepLSD.git",
+    "pytlsd",
     "omegaconf",
     "scikit-image",
     "paddlepaddle==3.3.1",
@@ -28,6 +29,7 @@ padel-cv = "src.cli:main"
 
 [project.optional-dependencies]
 vlm = ["boto3>=1.34.0"]
+tracknetv4 = ["tensorflow>=2.18.0,<2.19", "nvidia-cuda-nvcc-cu12"]
 
 [dependency-groups]
 dev = [

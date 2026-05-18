@@ -81,9 +81,9 @@ Player tracking uses a local ByteTrack-style tracker, not an external neural ReI
 
 ### Ball Detector
 
-Ball detection uses WASB-SBDT when configured and available. The default model path is `data/models/wasb_tennis_best.pth.tar`. The local adapter loads the WASB-SBDT repository, builds the configured WASB model, processes a temporal frame clip, predicts heatmaps, extracts the best candidate, and maps it back to original image coordinates.
+Ball detection uses TrackNetV4 when configured and available. The adapter loads the TrackNetV4 repository code, builds the model with custom Keras layers, processes 3 consecutive frames as a `(1, 9, 288, 512)` channels-first input, predicts heatmaps, extracts heatmap contour candidates, and selects the ball with configurable temporal gating before mapping it back to original image coordinates.
 
-If WASB-SBDT cannot be loaded and `fallback_to_heuristic` is true, the MVP uses a heuristic detector:
+If TrackNetV4 cannot be loaded and `fallback_to_heuristic` is true, the MVP uses a heuristic detector:
 
 - MOG2 background subtraction for motion.
 - HSV masks for yellow/green and white balls.
@@ -175,16 +175,16 @@ Ball processing can use a court ROI mask when registration is reliable enough:
 3. Disable the mask if registration confidence or mask area fails configured thresholds.
 4. Run ball detection on the masked frame.
 
-With WASB-SBDT, the detector:
+With TrackNetV4, the detector:
 
-1. Maintains the required number of recent frames for the model clip.
-2. Warps frames to the model input size.
-3. Normalizes RGB values with ImageNet-style mean and standard deviation.
-4. Runs the WASB model without gradients.
-5. Applies sigmoid to model heatmaps.
-6. Extracts candidates using connected components or NMS.
-7. Selects the candidate with the strongest rank score.
-8. Applies the inverse affine transform to recover original image coordinates.
+1. Maintains a 3-frame deque of recent frames.
+2. Resizes frames to 512x288 and converts BGR to RGB.
+3. Normalizes pixel values to [0, 1] range.
+4. Concatenates 3 frames into a (1, 9, 288, 512) channels-first batch.
+5. Runs the TrackNetV4 model inference (output includes sigmoid activation).
+6. Thresholds the heatmap for the current frame at the configured score threshold.
+7. Finds contour candidates and scores them with the configured temporal selection mode.
+8. Rejects short-gap candidates that jump too far from the previous accepted detection, then scales accepted coordinates back to original frame resolution.
 
 With the heuristic fallback, the detector combines motion, color, area, and circularity evidence. The heuristic is useful as a baseline, but it is less reliable for small, blurred, occluded, or fast-moving balls.
 
@@ -192,18 +192,18 @@ With the heuristic fallback, the detector combines motion, color, area, and circ
 
 Ball detections are post-processed by `BallKalmanTracker`:
 
-- State: `[x, y, vx, vy]` in image pixels.
+- State: `[x, y, vx, vy, ax, ay]` in image pixels.
 - Measurement: `[x, y]` from ball detection.
-- Motion model: constant velocity.
+- Motion model: constant acceleration.
 - Measurement noise increases when detection confidence is low.
 - Optional Mahalanobis gating rejects detections that are too far from prediction.
 - Process noise can increase with gap length and current speed.
 
 The tracker emits:
 
-- `detected` or `tracked` frames when a detection is accepted.
-- `interpolated` frames for gaps up to `ball_tracking.max_gap_frames`.
-- `missing` frames after the allowed gap is exceeded.
+- `tracked` frames when a detection is accepted.
+- `interpolated` frames only for bounded gaps between two accepted detections.
+- `missing` frames for long gaps, open-ended gaps after the last accepted detection, or gaps requiring an implausibly large interpolation step.
 
 Ball velocity is exported in pixels per second. Court-coordinate ball tracking is not part of the current main pipeline.
 

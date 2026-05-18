@@ -6,7 +6,7 @@ Computer vision pipeline for analyzing padel tennis game videos. Processes video
 
 - **Court Calibration** - DeepLSD line detection + template fitting for court registration
 - **Player Detection & Tracking** - YOLO11 + ByteTrack for up to 4 players
-- **Ball Detection & Tracking** - WASB-SBDT model with Kalman filtering and event detection
+- **Ball Detection & Tracking** - TrackNetV4 model with Kalman filtering and event detection
 - **Scoreboard OCR** - PaddleOCR-based score extraction
 - **Analytics** - Speed, acceleration, zone occupancy, formations, rally metrics
 - **Export** - Annotated video, minimap overlay, JSON, and CSV outputs
@@ -54,12 +54,30 @@ mkdir -p data/models
 wget -O data/models/deeplsd_md.tar https://cvg-data.inf.ethz.ch/DeepLSD/deeplsd_md.tar
 ```
 
-**WASB-SBDT tennis model** (ball detection):
+**TrackNetV4 model** (ball detection):
 
-Download the WASB Tennis model from [Google Drive](https://drive.google.com/file/d/14AeyIOCQ2UaQmbZLNQJa1H_eSwxUXk7z/view?usp=drive_link) and place it at:
+1. Clone the TrackNetV4 repository:
+
+```bash
+git clone https://github.com/TrackNetV4/TrackNetV4.git third_party/TrackNetV4
+```
+
+2. Download TrackNetV4 `.keras` weights from Google Drive and set `ball_tracking.tracknetv4.model_path`
+   in `configs/default.yaml`. The default config currently points at:
 
 ```
-data/models/wasb_tennis_best.pth.tar
+data/models/best_model_V1_NF_RIO_10u_e17.keras
+```
+
+Available weight variants:
+- [Variant 1](https://drive.google.com/file/d/1oCPQh3hT8rM5IRkA49DiW_M31W_C6V-k/view?usp=drive_link)
+- [Variant 2](https://drive.google.com/file/d/1uLjWJq2fSLk02O7PMajq9HvpFHfTMDmq/view?usp=drive_link)
+- [Variant 3](https://drive.google.com/file/d/1oPA4LzZXuy0My77G-B-ty3JRgEHmGLv9/view?usp=drive_link)
+
+3. Install TensorFlow (required for TrackNetV4):
+
+```bash
+uv sync --extra tracknetv4
 ```
 
 **YOLO11 and PaddleOCR** models are downloaded automatically on first run.
@@ -99,7 +117,7 @@ All pipeline parameters are in [configs/default.yaml](configs/default.yaml). Key
 - `detection` - YOLO model variant and confidence threshold
 - `tracking` - ByteTrack hyperparameters
 - `calibration` - DeepLSD settings and weights path
-- `ball_tracking` - WASB-SBDT model path and Kalman filter tuning
+- `ball_tracking` - TrackNetV4 model path and Kalman filter tuning
 - `scoreboard` - OCR engine and sampling interval
 - `export` - Output formats and video options
 
@@ -128,7 +146,7 @@ src/
 ├── calibration/       # Court registration (DeepLSD, template fitting)
 ├── detection/         # Player detection (YOLO11)
 ├── tracking/          # Player tracking (ByteTrack, identity assignment)
-├── ball_tracking/     # Ball detection (WASB-SBDT, Kalman filtering)
+├── ball_tracking/     # Ball detection (TrackNetV4, Kalman filtering)
 ├── coordinates/       # Homography projection, smoothing
 ├── analytics/         # Kinematics, zone analysis, rally metrics
 ├── scoreboard/        # Scoreboard detection, OCR, state machine
@@ -142,5 +160,5 @@ scripts/
 └── evaluate_*.py      # Component evaluation scripts
 configs/
 └── default.yaml       # Default pipeline configuration
-WASB-SBDT/             # Ball detection submodule
+third_party/TrackNetV4/ # TrackNetV4 ball detection (cloned separately)
 ```

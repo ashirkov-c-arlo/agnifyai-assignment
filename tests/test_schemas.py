@@ -98,10 +98,10 @@ def test_ball_detection_2d():
         image_xy=(500.0, 300.0),
         confidence=0.75,
         visibility="visible",
-        source="wasb_sbdt",
+        source="tracknetv4",
     )
     assert det.image_xy == (500.0, 300.0)
-    assert det.source == "wasb_sbdt"
+    assert det.source == "tracknetv4"
 
 
 def test_ball_track_2d():

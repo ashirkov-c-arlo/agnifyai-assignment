@@ -12,7 +12,7 @@ from src.schemas import BallDetection2D
 class BallDetector:
     """
     Ball detection using a combination of approaches:
-    1. If WASB-SBDT is configured and available: use it
+    1. If TrackNetV4 is configured and available: use it
     2. Otherwise: use color-based + motion-based detection as baseline
 
     The baseline detector:
@@ -27,7 +27,7 @@ class BallDetector:
         """Load config, try to load configured model, fallback to heuristic."""
         bt_config = config.get("ball_tracking", {})
         self._confidence_threshold = bt_config.get("confidence_threshold", 0.4)
-        self._model_name = bt_config.get("model", "wasb_sbdt")
+        self._model_name = bt_config.get("model", "tracknetv4")
         self._fallback_to_heuristic = bt_config.get("fallback_to_heuristic", True)
         self._model = None
 
@@ -55,8 +55,8 @@ class BallDetector:
         self._white_lower = np.array([0, 0, 200], dtype=np.uint8)
         self._white_upper = np.array([180, 40, 255], dtype=np.uint8)
 
-        if self._is_wasb_model():
-            self._load_wasb_sbdt(config)
+        if self._is_tracknetv4_model():
+            self._load_tracknetv4(config)
         elif self._model_name != "heuristic":
             logger.warning(
                 "Unknown ball tracking model '{}', using heuristic ball detector",
@@ -65,18 +65,18 @@ class BallDetector:
         else:
             logger.info("Using heuristic ball detector")
 
-    def _is_wasb_model(self) -> bool:
-        return self._model_name in {"wasb", "wasb_sbdt", "wasb-sbdt"}
+    def _is_tracknetv4_model(self) -> bool:
+        return self._model_name in {"tracknetv4", "tracknet-v4", "tracknet_v4"}
 
-    def _load_wasb_sbdt(self, config: dict) -> None:
+    def _load_tracknetv4(self, config: dict) -> None:
         try:
-            self._model = _load_wasb_sbdt_detector(config)
-            logger.info("WASB-SBDT ball detector loaded")
+            self._model = _load_tracknetv4_detector(config)
+            logger.info("TrackNetV4 ball detector loaded")
         except RuntimeError as exc:
             if not self._fallback_to_heuristic:
                 raise
-            logger.warning("WASB-SBDT unavailable; using heuristic ball detector")
-            logger.opt(exception=exc).debug("WASB-SBDT initialization failure details")
+            logger.warning("TrackNetV4 unavailable; using heuristic ball detector")
+            logger.opt(exception=exc).debug("TrackNetV4 initialization failure details")
 
     def detect_frame(
         self, frame: np.ndarray, prev_frames: list[np.ndarray] | None = None
@@ -177,7 +177,8 @@ class BallDetector:
 
         return candidates
 
-def _load_wasb_sbdt_detector(config: dict):
-    from src.ball_tracking.wasb_sbdt import WasbSbdtDetector
 
-    return WasbSbdtDetector(config)
+def _load_tracknetv4_detector(config: dict):
+    from src.ball_tracking.tracknetv4 import TrackNetV4Detector
+
+    return TrackNetV4Detector(config)

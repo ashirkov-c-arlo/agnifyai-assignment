@@ -18,6 +18,8 @@ from src.ball_tracking.metrics import (
     compute_shot_depth,
     compute_shot_direction,
 )
+from src.ball_tracking.tracker import build_ball_tracks
+from src.ball_tracking.tracknetv4 import TrackNetV4Detector
 from src.schemas import (
     BallDetection2D,
     BallEventCandidate,
@@ -31,7 +33,7 @@ from src.schemas import (
 def default_config():
     return {
         "ball_tracking": {
-            "model": "wasb_sbdt",
+            "model": "tracknetv4",
             "confidence_threshold": 0.4,
             "fallback_to_heuristic": True,
             "max_gap_frames": 10,
@@ -59,42 +61,89 @@ class TestBallDetectorInit:
     def test_instantiation_with_config(self, default_config):
         detector = BallDetector(default_config)
         assert detector._confidence_threshold == 0.4
-        assert detector._model is None  # no model file exists
+        assert detector._model is not None or detector._fallback_to_heuristic
 
     def test_instantiation_with_empty_config(self):
         detector = BallDetector({})
         assert detector._confidence_threshold == 0.4
-        assert detector._model is None
+        assert detector._model is not None or detector._fallback_to_heuristic
 
     def test_custom_threshold(self):
         config = {"ball_tracking": {"confidence_threshold": 0.6}}
         detector = BallDetector(config)
         assert detector._confidence_threshold == 0.6
 
-    def test_wasb_backend_is_used_when_available(self, monkeypatch):
-        class StubWasbDetector:
+    def test_tracknetv4_backend_is_used_when_available(self, monkeypatch):
+        class StubTrackNetV4Detector:
             def detect_frame(self, frame, prev_frames=None):
                 return BallDetection2D(
                     frame=0,
                     time_s=0.0,
                     image_xy=(123.0, 45.0),
                     confidence=0.8,
-                    source="wasb_sbdt",
+                    source="tracknetv4",
                 )
 
         monkeypatch.setattr(
-            "src.ball_tracking.detector._load_wasb_sbdt_detector",
-            lambda config: StubWasbDetector(),
+            "src.ball_tracking.detector._load_tracknetv4_detector",
+            lambda config: StubTrackNetV4Detector(),
         )
 
-        detector = BallDetector({"ball_tracking": {"model": "wasb_sbdt"}})
+        detector = BallDetector({"ball_tracking": {"model": "tracknetv4"}})
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
         result = detector.detect_frame(frame)
 
         assert result is not None
         assert result.image_xy == (123.0, 45.0)
-        assert result.source == "wasb_sbdt"
+        assert result.source == "tracknetv4"
+
+    def test_tracknetv4_warmup_returns_none(self, monkeypatch):
+        """TrackNetV4 needs 3 frames; first 2 should return None."""
+        call_count = {"n": 0}
+
+        class StubTrackNetV4Detector:
+            def detect_frame(self, frame, prev_frames=None):
+                call_count["n"] += 1
+                if call_count["n"] < 3:
+                    return None
+                return BallDetection2D(
+                    frame=0, time_s=0.0, image_xy=(50.0, 60.0),
+                    confidence=0.9, source="tracknetv4",
+                )
+
+        monkeypatch.setattr(
+            "src.ball_tracking.detector._load_tracknetv4_detector",
+            lambda config: StubTrackNetV4Detector(),
+        )
+
+        detector = BallDetector({"ball_tracking": {"model": "tracknetv4"}})
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        assert detector.detect_frame(frame) is None
+        assert detector.detect_frame(frame) is None
+        result = detector.detect_frame(frame)
+        assert result is not None
+        assert result.source == "tracknetv4"
+
+    def test_tracknetv4_threshold_filtering(self, monkeypatch):
+        """Detections below confidence_threshold should be filtered."""
+        class StubTrackNetV4Detector:
+            def detect_frame(self, frame, prev_frames=None):
+                return BallDetection2D(
+                    frame=0, time_s=0.0, image_xy=(100.0, 100.0),
+                    confidence=0.2, source="tracknetv4",
+                )
+
+        monkeypatch.setattr(
+            "src.ball_tracking.detector._load_tracknetv4_detector",
+            lambda config: StubTrackNetV4Detector(),
+        )
+
+        detector = BallDetector({"ball_tracking": {"model": "tracknetv4", "confidence_threshold": 0.5}})
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        assert detector.detect_frame(frame) is None
 
     def test_detect_frame_with_blank_image(self, default_config):
         detector = BallDetector(default_config)
@@ -125,6 +174,61 @@ class TestBallDetectorInit:
             # Position should be near the circle center
             assert abs(result.image_xy[0] - 320) < 30
             assert abs(result.image_xy[1] - 240) < 30
+
+
+class TestTrackNetV4Postprocess:
+    def _detector(self) -> TrackNetV4Detector:
+        detector = TrackNetV4Detector.__new__(TrackNetV4Detector)
+        detector._input_width = 64
+        detector._input_height = 64
+        detector._score_threshold = 0.5
+        detector._candidate_selection = "temporal_mass"
+        detector._max_jump_px = 12.0
+        detector._reacquire_gap_frames = 6
+        detector._last_detection_xy = None
+        detector._missing_frames = detector._reacquire_gap_frames + 1
+        return detector
+
+    def test_temporal_selection_prefers_near_candidate(self):
+        detector = self._detector()
+        detector._last_detection_xy = (10.0, 10.0)
+        detector._missing_frames = 0
+
+        heatmap = np.zeros((64, 64), dtype=np.float32)
+        heatmap[10:12, 10:12] = 0.8
+        heatmap[50:56, 50:56] = 0.95
+
+        result = detector._postprocess(heatmap, 64, 64)
+
+        assert result is not None
+        assert result.image_xy == pytest.approx((11.0, 11.0))
+        assert result.confidence == pytest.approx(0.8)
+
+    def test_temporal_selection_rejects_far_only_candidate(self):
+        detector = self._detector()
+        detector._last_detection_xy = (10.0, 10.0)
+        detector._missing_frames = 0
+
+        heatmap = np.zeros((64, 64), dtype=np.float32)
+        heatmap[50:56, 50:56] = 0.95
+
+        assert detector._postprocess(heatmap, 64, 64) is None
+        assert detector._last_detection_xy == (10.0, 10.0)
+        assert detector._missing_frames == 1
+
+    def test_temporal_selection_reacquires_after_gap(self):
+        detector = self._detector()
+        detector._last_detection_xy = (10.0, 10.0)
+        detector._missing_frames = detector._reacquire_gap_frames + 1
+
+        heatmap = np.zeros((64, 64), dtype=np.float32)
+        heatmap[50:56, 50:56] = 0.95
+
+        result = detector._postprocess(heatmap, 64, 64)
+
+        assert result is not None
+        assert result.image_xy == pytest.approx((53.0, 53.0))
+        assert detector._missing_frames == 0
 
 
 class TestBallKalmanTracker:
@@ -267,6 +371,87 @@ class TestBallKalmanTracker:
         )
 
         assert kalman_error < linear_error
+
+
+class TestBuildBallTracks:
+    def _config(self, max_gap_frames: int = 3, max_interpolation_step_px: float = 100.0) -> dict:
+        return {
+            "ball_tracking": {
+                "max_gap_frames": max_gap_frames,
+                "max_interpolation_step_px": max_interpolation_step_px,
+                "kalman_process_noise": 0.1,
+                "kalman_gate": {"threshold": 0.0},
+            }
+        }
+
+    def _detection(self, frame: int, xy: tuple[float, float]) -> BallDetection2D:
+        return BallDetection2D(
+            frame=frame,
+            time_s=frame / 30,
+            image_xy=xy,
+            confidence=0.9,
+            visibility="visible",
+            source="test",
+        )
+
+    def test_short_bounded_gap_is_linearly_interpolated(self):
+        tracks = build_ball_tracks(
+            detections=[
+                self._detection(0, (0.0, 0.0)),
+                self._detection(3, (30.0, 0.0)),
+            ],
+            config=self._config(max_gap_frames=3),
+            total_frames=4,
+            fps=30.0,
+        )
+
+        assert [t.state for t in tracks] == ["tracked", "interpolated", "interpolated", "tracked"]
+        assert tracks[1].image_xy == pytest.approx((10.0, 0.0))
+        assert tracks[2].image_xy == pytest.approx((20.0, 0.0))
+
+    def test_long_gap_is_marked_missing_not_extrapolated(self):
+        tracks = build_ball_tracks(
+            detections=[
+                self._detection(0, (0.0, 0.0)),
+                self._detection(5, (50.0, 0.0)),
+            ],
+            config=self._config(max_gap_frames=3),
+            total_frames=6,
+            fps=30.0,
+        )
+
+        assert [t.state for t in tracks] == [
+            "tracked",
+            "missing",
+            "missing",
+            "missing",
+            "missing",
+            "tracked",
+        ]
+
+    def test_large_gap_step_is_marked_missing(self):
+        tracks = build_ball_tracks(
+            detections=[
+                self._detection(0, (0.0, 0.0)),
+                self._detection(2, (300.0, 0.0)),
+            ],
+            config=self._config(max_gap_frames=3, max_interpolation_step_px=100.0),
+            total_frames=3,
+            fps=30.0,
+        )
+
+        assert [t.state for t in tracks] == ["tracked", "missing", "tracked"]
+
+    def test_tail_after_last_detection_is_missing(self):
+        tracks = build_ball_tracks(
+            detections=[self._detection(0, (20.0, 30.0))],
+            config=self._config(max_gap_frames=3),
+            total_frames=4,
+            fps=30.0,
+        )
+
+        assert [t.state for t in tracks] == ["tracked", "missing", "missing", "missing"]
+        assert all(t.velocity_px_s is None for t in tracks[1:])
 
 
 class TestBounceCandidates:

@@ -120,7 +120,7 @@ def main(video: str, config_path: str | None, output_dir: str, log_level: str | 
     detections: dict[int, list] = {}
     try:
         from src.ball_tracking.ball_processor import BallFrameProcessor
-        from src.ball_tracking.tracker import _build_court_roi
+        from src.ball_tracking.tracker import _build_court_roi, _validate_court_roi
         from src.detection.player_processor import PlayerFrameProcessor
         from src.detection.roi_filter import filter_detections_by_court_roi
         from src.scoreboard.scoreboard_processor import ScoreboardFrameProcessor
@@ -131,6 +131,7 @@ def main(video: str, config_path: str | None, output_dir: str, log_level: str | 
         player_proc = PlayerFrameProcessor(cfg)
 
         court_roi = _build_court_roi(registration, video_info) if registration.mode != "pixel_only" else None
+        court_roi = _validate_court_roi(court_roi, registration, video_info, cfg)
         ball_proc = BallFrameProcessor(cfg, fps, court_roi)
 
         scoreboard_proc = ScoreboardFrameProcessor(cfg, fps, image_shape)

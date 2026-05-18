@@ -45,9 +45,12 @@ def test_calibration_config():
 
 def test_ball_tracking_config():
     cfg = load_config()
-    assert cfg["ball_tracking"]["model"] == "wasb_sbdt"
-    assert cfg["ball_tracking"]["confidence_threshold"] == 0.4
-    assert cfg["ball_tracking"]["wasb_sbdt"]["dataset"] == "tennis"
+    assert cfg["ball_tracking"]["model"] == "tracknetv4"
+    assert cfg["ball_tracking"]["confidence_threshold"] == 0.3
+    assert cfg["ball_tracking"]["max_interpolation_step_px"] == 220.0
+    assert cfg["ball_tracking"]["tracknetv4"]["input_width"] == 512
+    assert cfg["ball_tracking"]["tracknetv4"]["input_height"] == 288
+    assert cfg["ball_tracking"]["tracknetv4"]["candidate_selection"] == "temporal_mass"
 
 
 def test_export_config():
